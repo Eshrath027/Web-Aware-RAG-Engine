@@ -5,3 +5,16 @@ langchain
 faiss-cpu 
 openai 
 tiktoken
+langchain-community
+langchain-openai
+langchain-anthropic
+python-dotenv
+pydantic
+duckduckgo-search
+bs4
+dotenv
+celery[redis]
+redis
+requests
+sqlalchemy
+psycopg2-binary

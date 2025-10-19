@@ -1,0 +1,29 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - FAISS_INDEX_PATH=/app/faiss_index
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    command: celery -A worker worker --loglevel=info
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - FAISS_INDEX_PATH=/app/faiss_index
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
