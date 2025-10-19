@@ -81,3 +81,4 @@ async def query_faiss(request: QueryRequest):
         "results": [{"content": r.page_content, "metadata": r.metadata} for r in results],
     }
 
+
