@@ -52,8 +52,6 @@ A **Retrieval-Augmented Generation (RAG)** system that asynchronously ingests we
 2. Worker fetches content, splits into chunks, creates embeddings, stores in FAISS.
 3. Query endpoint: user query → embed → FAISS search → return top results.
 
-> Note: In this version, ingestion metadata is **not persisted in a DB**; only logged to the console.
-
 ---
 
 ## Design Choices
