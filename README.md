@@ -143,7 +143,7 @@ Query the ingested knowledge base.
 ```json
 {
   "query": "Explain transformers",
-  "top_k": 5
+  "top_k": 2
 }
 ```
 
@@ -165,7 +165,7 @@ Query the ingested knowledge base.
 ```bash
 curl -X POST http://127.0.0.1:8000/query \
      -H "Content-Type: application/json" \
-     -d '{"query":"Explain OCI IAM policies", "top_k":5}'
+     -d '{"query":"Explain transformers", "top_k":2}'
 ```
 
 ---
