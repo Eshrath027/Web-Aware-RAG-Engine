@@ -6,6 +6,7 @@ from models import IngestionRecord, IngestionStatus
 
 from dotenv import load_dotenv
 load_dotenv()
+
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 app = Celery("tasks", broker=redis_url)
 
@@ -27,7 +28,7 @@ def ingest_url_task(url: str):
             record.chunk_count = chunk_count
             db.commit()
 
-        return f"✅ Ingested {chunk_count} chunks from {url}"
+        return f" Ingested {chunk_count} chunks from {url}"
 
     except Exception as e:
         if record:
