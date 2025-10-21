@@ -1,89 +1,109 @@
-A **Retrieval-Augmented Generation (RAG)** system that asynchronously ingests web content, stores embeddings in FAISS, and allows users to query the knowledge base for grounded answers. 
+A **Retrieval-Augmented Generation (RAG)** system that asynchronously ingests web content, stores embeddings in FAISS, and allows users to query the knowledge base for grounded answers.
 
 ---
 
-## Table of Contents
-
-1. [Architecture](#architecture)
-2. [Design Choices](#design-choices)
-3. [Technology Stack](#technology-stack)
-4. [API Endpoints](#api-endpoints)
-5. [Setup Instructions](#setup-instructions)
-6. [Demo](#api)
-
----
-
-## Architecture
+##  Architecture
 
 ```text
                  +--------------------+
-                 |      User/API       |
+                 |      User/API      |
                  +--------------------+
                            |
                            v
                 +----------------------+
-                | FastAPI Application  |
+                |  FastAPI Application |
                 +----------------------+
                 | /ingest-url          |
                 | /query               |
                 +----------------------+
                            |
-                 ----------------------
-                 |                    |
-                 v                    v
-         +----------------+   +----------------+
-         |  Redis Queue   |   |  FAISS Index   |
-         |  (Celery tasks)|   | stores embeddings |
-         +----------------+   +----------------+
-                 |
-                 v
-         +----------------+
-         | Celery Worker  |
-         | fetches URL,   |
-         | splits text,   |
-         | embeds, adds   |
-         | to FAISS       |
-         +----------------+
+         -------------------------------------------------
+         |                    |                        |
+         v                    v                        v
+ +----------------+   +----------------+     +--------------------+
+ |  Redis Queue   |   |  FAISS Index   |     |  SQLite Metadata   |
+ | (Celery Tasks) |   | (Vector Store) |     |  (Ingest + Query)  |
+ +----------------+   +----------------+     +--------------------+
+         |
+         v
+ +----------------+
+ | Celery Worker  |
+ | Fetch, Chunk,  |
+ | Embed, Store   |
+ +----------------+
 ```
 
-**Flow:**
+### **System Flow**
 
-1. User submits URL → FastAPI → Redis queue → Celery worker.
-2. Worker fetches content, splits into chunks, creates embeddings, stores in FAISS.
-3. Query endpoint: user query → embed → FAISS search → return top results.
+1. User submits a URL to `/ingest-url` → added to **Redis queue**.
+2. **Celery Worker** fetches and processes the content → splits → embeds → stores in **FAISS Index**.
+3. **SQLite DB** records ingestion status and metadata.
+4. For `/query`, the user input is embedded → similar results fetched from FAISS → grounded response returned and logged in **SQLite**.
 
 ---
 
 ## Design Choices
 
-| Component             | Reason                                                |
-| --------------------- | ----------------------------------------------------- |
-| **FastAPI**           | High-performance async API framework                  |
-| **Celery + Redis**    | Async task queue; ensures ingestion is non-blocking   |
-| **FAISS**             | Optimized for fast vector similarity search           |
-| **LangChain**         | Simplifies FAISS integration with document embeddings |
-| **OpenAI Embeddings** | Converts text chunks into vectors for semantic search |
+| Component              | Reason                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| **FastAPI**            | High-performance, async-friendly API for scalable ingestion and querying.    |
+| **Celery + Redis**     | Enables background task processing for non-blocking ingestion.               |
+| **FAISS**              | Efficient vector similarity search for high-dimensional embeddings.          |
+| **SQLite Metadata DB** | Lightweight relational store for ingestion logs and query tracking.          |
+| **LangChain**          | Simplifies integration between FAISS, embeddings, and text processing.       |
+| **OpenAI Embeddings**  | Converts text chunks into dense semantic vectors (`text-embedding-3-large`). |
+
+---
+
+## Database Schema
+
+### **1. Ingestion Metadata Table (`ingestions`)**
+
+Tracks every ingestion job.
+
+| Field       | Type         | Description                        |
+| ----------- | ------------ | ---------------------------------- |
+| id          | INTEGER (PK) | Auto ID                            |
+| url         | TEXT         | Ingested URL                       |
+| status      | TEXT         | `pending` / `completed` / `failed` |
+| chunk_count | INTEGER      | Number of text chunks generated    |
+| created_at  | TIMESTAMP    | Time of ingestion request          |
+| updated_at  | TIMESTAMP    | Last updated timestamp             |
+
+### **2. Query Log Table (`query_logs`)**
+
+Stores all user queries and responses.
+
+| Field         | Type         | Description                       |
+| ------------- | ------------ | --------------------------------- |
+| id            | INTEGER (PK) | Auto ID                           |
+| query_text    | TEXT         | Original query                    |
+| response_text | TEXT         | Final generated answer            |
+| top_sources   | JSON         | Retrieved text chunks or metadata |
+| created_at    | TIMESTAMP    | Query timestamp                   |
 
 ---
 
 ## Technology Stack
 
-| Layer            | Technology                                   |
-| ---------------- | -------------------------------------------- |
-| Web Framework    | FastAPI                                      |
-| Background Jobs  | Celery                                       |
-| Message Queue    | Redis                                        |
-| Vector Store     | FAISS (via LangChain wrapper)                |
-| Embeddings Model | OpenAI Embeddings (`text-embedding-3-large`) |
-| Python Libraries | LangChain, requests, Celery, uvicorn         |
+| Layer            | Technology                                   | Reason                                      |
+| ---------------- | -------------------------------------------- | ------------------------------------------- |
+| Web Framework    | **FastAPI**                                  | Modern async API for ingestion & query      |
+| Background Jobs  | **Celery**                                   | Handles async content ingestion             |
+| Message Queue    | **Redis**                                    | Broker between FastAPI and Celery           |
+| Vector Store     | **FAISS**                                    | Fast nearest-neighbor search                |
+| Metadata Store   | **SQLite / PostgreSQL**                      | Tracks ingestion & query history            |
+| Embeddings Model | **OpenAI (`text-embedding-3-large`)**        | Generates semantic vector representations   |
+| Libraries        | **LangChain, requests, SQLAlchemy, uvicorn** | Simplify embedding, API, and database logic |
 
 ---
 
-## API Endpoints
+## API Documentation
 
-### 1. `POST /ingest-url`
+### **1. `POST /ingest-url`**
 
-**Description:** Submit a URL for ingestion.
+**Description:**
+Submit a URL for ingestion.
 
 **Request Body:**
 
@@ -103,11 +123,20 @@ A **Retrieval-Augmented Generation (RAG)** system that asynchronously ingests we
 }
 ```
 
+ **Example:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/ingest-url \
+     -H "Content-Type: application/json" \
+     -d '{"url":"https://example.com/article"}'
+```
+
 ---
 
-### 2. `POST /query`
+### **2. `POST /query`**
 
-**Description:** Query the ingested content.
+**Description:**
+Query the ingested knowledge base.
 
 **Request Body:**
 
@@ -123,79 +152,86 @@ A **Retrieval-Augmented Generation (RAG)** system that asynchronously ingests we
 ```json
 {
   "query": "Explain transformers",
-  "response": "transformers define ...",
+  "response": "Transformers are deep learning models...",
   "results": [
-    {"content": "Chunk text 1", "metadata": {...}},
-    {"content": "Chunk text 2", "metadata": {...}}
+    {"content": "Chunk 1 text...", "metadata": {...}},
+    {"content": "Chunk 2 text...", "metadata": {...}}
   ]
 }
+```
+
+ **Example:**
+
+```bash
+curl -X POST http://127.0.0.1:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"query":"Explain OCI IAM policies", "top_k":5}'
 ```
 
 ---
 
 ## Setup Instructions
 
-### 1. Clone the Repo
+### **1. Clone the Repository**
 
 ```bash
 git clone https://github.com/Eshrath027/rag-engine.git
 cd rag-engine
 ```
 
-### 2. Create Virtual Environment
+### **2. Create Virtual Environment**
 
 ```bash
-python3 -m venv venv / virtualenv -p python3 .venv
+python3 -m venv venv
 source venv/bin/activate  # Linux/Mac
 venv\Scripts\activate     # Windows
 ```
 
-### 3. Install Dependencies
+### **3. Install Dependencies**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Setup Environment Variables (`.env`)
+### **4. Setup Environment Variables**
+
+Create `.env` or copy from `.env.example`:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key
 FAISS_INDEX_PATH=./faiss_index
 REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=sqlite:///rag_metadata.db
 ```
 
-### 5. Start Redis
+### **5. Run Services**
 
 ```bash
+# Start Redis
 redis-server
-```
 
-### 6. Start Celery Worker
-
-```bash
+# Start Celery Worker
 celery -A worker.app worker --loglevel=info
-```
+or 
+celery -A divy worker --concurrency=1 --loglevel=INFO -Q celery
 
-### 7. Start FastAPI App
-
-```bash
+# Start FastAPI Server
 uvicorn main:app --reload
 ```
 
 ---
 
-## API
-
-* Ingest a URL:
+## Docker Setup (Optional)
 
 ```bash
-curl -X POST http://127.0.0.1:8000/ingest-url -H "Content-Type: application/json" -d '{"url":"https://example.com/article"}'
+docker-compose up --build
 ```
 
-* Query the content:
+This runs:
 
-```bash
-curl -X POST http://127.0.0.1:8000/query -H "Content-Type: application/json" -d '{"query":"Explain OCI IAM policies", "top_k":5}'
-```
+* FastAPI app on port `8000`
+* Redis for Celery queue
+* Celery worker
+* SQLite volume (for metadata)
 
-
+---
