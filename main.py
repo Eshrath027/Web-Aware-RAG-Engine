@@ -6,6 +6,10 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from database import init_db, SessionLocal
 from models import IngestionRecord, IngestionStatus, QueryLog
+from fastapi import UploadFile, File
+import csv
+import io
+import asyncio
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -78,4 +82,54 @@ async def query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
+
+
+
+
+@app.post("/ingest-auto")
+async def ingest_auto(file: UploadFile = File(...)):
+    """
+    Accepts a CSV file containing URLs and asynchronously queues each for ingestion.
+    """
+    db = SessionLocal()
+    try:
+        # Read CSV file contents
+        content = await file.read()
+        decoded = content.decode("utf-8")
+        reader = csv.reader(io.StringIO(decoded))
+        urls = [row[0].strip() for row in reader if row]
+
+        if not urls:
+            raise HTTPException(status_code=400, detail="CSV file is empty or invalid.")
+
+        records = []
+        tasks = []
+
+        # Create ingestion records and queue Celery tasks asynchronously
+        for url in urls:
+            record = IngestionRecord(url=url, status=IngestionStatus.pending)
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            records.append(record.id)
+
+            # Schedule Celery ingestion task asynchronously
+            tasks.append(asyncio.to_thread(ingest_url_task.delay, url))
+
+        # Wait for all async background task submissions
+        await asyncio.gather(*tasks)
+
+        return {
+            "status": "accepted",
+            "queued_count": len(urls),
+            "record_ids": records,
+            "message": f"{len(urls)} URLs queued for ingestion",
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
 

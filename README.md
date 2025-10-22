@@ -213,7 +213,7 @@ redis-server
 # Start Celery Worker
 celery -A worker.app worker --loglevel=info
 or 
-celery -A divy worker --concurrency=1 --loglevel=INFO -Q celery
+celery -A worker.app worker --concurrency=1 --loglevel=INFO -Q celery
 
 # Start FastAPI Server
 uvicorn main:app --reload
