@@ -1,0 +1,142 @@
+name: Semgrep Code Scan with Claude Verification
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  semgrep:
+    name: Run Semgrep with Claude Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      
+      - name: Install Semgrep
+        run: pip install semgrep
+      
+      - name: Run Semgrep scan (non-blocking)
+        run: semgrep ci --config auto || true
+      
+      - name: Save Semgrep reports
+        if: always()
+        run: |
+          semgrep --config auto --json > semgrep-report.json
+          semgrep --config auto --text > semgrep-report.txt
+      
+      - name: Install Claude CLI
+        if: always()
+        run: |
+          curl -fsSL https://cli.anthropic.com/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Verify Semgrep findings with Claude
+        if: always()
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cat > claude_prompt.txt <<'EOF'
+          You are a security code reviewer. I have a Semgrep scan report that I need you to verify.
+          
+          Your task:
+          1. Read the semgrep-report.json file which contains security findings
+          2. For EACH finding in the report:
+             - Access the specific file mentioned in the finding
+             - Navigate to the exact line number mentioned
+             - Read the surrounding code context
+             - Determine if the finding is a TRUE POSITIVE or FALSE POSITIVE
+             - If TRUE POSITIVE: Explain why it's a real security issue and provide a specific fix
+             - If FALSE POSITIVE: Explain why it's not actually a security issue
+          
+          3. Create a detailed markdown report (claude-verification-report.md) with this structure:
+          
+          # Semgrep Findings Verification Report
+          
+          ## Summary
+          - Total findings: X
+          - True positives: Y
+          - False positives: Z
+          
+          ## Detailed Analysis
+          
+          ### Finding 1: [Rule ID]
+          - **File**: path/to/file.py
+          - **Line**: 123
+          - **Semgrep Message**: [original message]
+          - **Verdict**: TRUE POSITIVE / FALSE POSITIVE
+          - **Code Context**:
+          ```
+          [relevant code snippet]
+          ```
+          - **Analysis**: [Your detailed explanation]
+          - **Recommended Fix** (if applicable):
+          ```
+          [suggested code fix]
+          ```
+          
+          [Repeat for each finding]
+          
+          Please analyze all findings thoroughly by examining the actual code.
+          EOF
+          
+          claude "$(cat claude_prompt.txt)"
+      
+      - name: Check if Claude report exists
+        if: always()
+        id: check_report
+        run: |
+          if [ -f "claude-verification-report.md" ]; then
+            echo "report_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "report_exists=false" >> $GITHUB_OUTPUT
+            echo "Claude verification report not found"
+          fi
+      
+      - name: Display Claude verification summary
+        if: always() && steps.check_report.outputs.report_exists == 'true'
+        run: |
+          echo "=== Claude Verification Summary ==="
+          head -n 20 claude-verification-report.md
+          echo ""
+          echo "Full report available in artifacts"
+      
+      - name: Upload all reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-reports
+          path: |
+            semgrep-report.json
+            semgrep-report.txt
+            claude-verification-report.md
+      
+      - name: Comment on PR (optional)
+        if: always() && github.event_name == 'pull_request' && steps.check_report.outputs.report_exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let comment = '## Security Scan Results\n\n';
+            
+            try {
+              const claudeReport = fs.readFileSync('claude-verification-report.md', 'utf8');
+              const summary = claudeReport.split('## Detailed Analysis')[0];
+              comment += summary;
+              comment += '\n\n Full verification report available in workflow artifacts.';
+            } catch (error) {
+              comment += 'Claude verification report could not be read.';
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
