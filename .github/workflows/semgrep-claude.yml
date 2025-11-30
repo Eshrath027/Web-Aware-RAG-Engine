@@ -24,102 +24,92 @@ jobs:
         with:
           python-version: 3.x
       
-      - name: Install Semgrep
-        run: pip install semgrep
-      
+      - name: Install dependencies
+        run: |
+          pip install semgrep anthropic python-dotenv
+
       - name: Run Semgrep scan (non-blocking)
         run: semgrep ci --config auto || true
-      
+
       - name: Save Semgrep reports
         if: always()
         run: |
           semgrep --config auto --json > semgrep-report.json || echo '{"results":[]}' > semgrep-report.json
           semgrep --config auto --text > semgrep-report.txt || echo "No findings" > semgrep-report.txt
-      
-      - name: Install Claude CLI
-        if: always()
-        run: |
-          # Download and install Claude CLI
-          curl -fsSL https://cli.anthropic.com/install.sh | sh
-          
-          # Add to PATH for subsequent steps
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          
-          # Verify installation
-          export PATH="$HOME/.local/bin:$PATH"
-          which claude || echo "Claude not found in PATH"
-          claude --version || echo "Claude command failed"
-      
+
       - name: Verify Semgrep findings with Claude
         if: always()
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Ensure claude is in PATH
-          export PATH="$HOME/.local/bin:$PATH"
-          
-          # Create the prompt
-          cat > claude_prompt.txt <<'EOF'
-          You are a security code reviewer. I have a Semgrep scan report that I need you to verify.
-          
-          Your task:
-          1. Read the semgrep-report.json file in the current directory
-          2. For EACH finding in the report:
-             - Examine the specific file and line number mentioned
-             - Read the surrounding code context (at least 10 lines before and after)
-             - Analyze if the finding is a TRUE POSITIVE or FALSE POSITIVE
-             - Consider the actual code logic and data flow
-          
-          3. Create a detailed report file named "claude-verification-report.md" with this structure:
-          
+          # Create Python script for Claude verification
+          cat > verify_findings.py <<'EOF'
+          import os
+          import json
+          from anthropic import Anthropic
+
+          client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+          # Load Semgrep results
+          with open("semgrep-report.json", "r") as f:
+              semgrep_data = json.load(f)
+
+          findings = semgrep_data.get("results", [])
+
+          # Create prompt
+          prompt = f"""You are a security code reviewer. I have {len(findings)} Semgrep findings to verify.
+
+          Here are the findings:
+          {json.dumps(findings, indent=2)}
+
+          For each finding:
+          1. Examine the file and line number
+          2. Determine if it's a TRUE POSITIVE or FALSE POSITIVE
+          3. Consider code context and data flow
+
+          Create a detailed markdown report with:
+
           # Semgrep Findings Verification Report
-          
+
           ## Summary
-          - Total findings: [count]
+          - Total findings: {len(findings)}
           - True positives: [count]
           - False positives: [count]
-          - High severity: [count]
-          - Medium severity: [count]
-          - Low severity: [count]
-          
+
           ## Detailed Analysis
-          
-          ### Finding 1: [Rule ID]
-          - **File**: `path/to/file`
-          - **Line**: [line number]
-          - **Severity**: [HIGH/MEDIUM/LOW]
-          - **Semgrep Rule**: [rule name]
-          - **Semgrep Message**: [original message]
-          - **Verdict**: TRUE POSITIVE / FALSE POSITIVE
-          
-          **Code Context:**
-          ```
-          [relevant code snippet with line numbers]
-          ```
 
-          **Analysis**:
-          [Your detailed explanation of why this is or isn't a real security issue]
+          For each finding, provide:
+          - File and line number
+          - Severity
+          - Verdict (TRUE POSITIVE / FALSE POSITIVE)
+          - Analysis explaining your reasoning
+          - Recommended fix (if true positive)
 
-          **Recommended Fix** (if true positive):
-          ```
-          [suggested secure code]
-          ```
-          
-          **Justification** (if false positive):
-          [Explain why this is not actually a security risk]
-          
-          ---
-          
-          [Repeat for each finding]
-          
-          ## Recommendations
-          [Overall security recommendations based on the findings]
-          
-          Please analyze all findings thoroughly by examining the actual repository code.
+          Please analyze thoroughly."""
+
+          # Call Claude
+          message = client.messages.create(
+              model="claude-sonnet-4-5-20250929",
+              max_tokens=8000,
+              messages=[
+                  {
+                      "role": "user",
+                      "content": prompt
+                  }
+              ]
+          )
+
+          # Save report
+          report = message.content[0].text
+          with open("claude-verification-report.md", "w") as f:
+              f.write(report)
+
+          print("✅ Claude verification completed")
+          print(f"Report saved to claude-verification-report.md")
           EOF
-          
-          # Run Claude CLI
-          $HOME/.local/bin/claude "$(cat claude_prompt.txt)"
+
+          # Run the verification script
+          python3 verify_findings.py
       
       - name: Check if Claude report exists
         if: always()
@@ -153,7 +143,7 @@ jobs:
             semgrep-report.json
             semgrep-report.txt
             claude-verification-report.md
-            claude_prompt.txt
+            verify_findings.py
       
       - name: Comment on PR with summary
         if: always() && github.event_name == 'pull_request' && steps.check_report.outputs.report_exists == 'true'
