@@ -8,13 +8,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  semgrep-scan:
-    name: Run Semgrep & Validate with Claude
+  semgrep:
+    name: Run Semgrep & Validate
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
-      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -39,36 +38,38 @@ jobs:
           semgrep --config auto --json > semgrep-report.json
           semgrep --config auto --text > semgrep-report.txt
 
-      - name: Validate Semgrep findings with Claude
+      - name: Validate findings with Claude AI
         if: always()
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTROPIC_API_KEY }}
+          claude_args: '--allowed-tools Read,Grep,Glob,Bash'
           prompt: |
-            I need you to validate the Semgrep security findings in semgrep-report.json.
+            Validate the Semgrep security findings in semgrep-report.json.
 
-            For EACH finding in the JSON file:
-            1. Read the actual source code file at the path mentioned in the finding
-            2. Examine the specific line numbers where the issue was detected
-            3. Understand the full context of the code (read surrounding code, understand data flow)
-            4. Determine if this is a TRUE POSITIVE (real security vulnerability) or FALSE POSITIVE (safe code incorrectly flagged)
+            For EACH finding:
+            1. Read the source code file at the reported path
+            2. Examine the specific line numbers
+            3. Analyze the code context and data flow
+            4. Determine: TRUE POSITIVE (real vulnerability) or FALSE POSITIVE (safe code)
 
-            For each finding, add these fields:
-            - "is_false_positive": true or false
-            - "validation_reason": "Detailed explanation of why this is classified as true/false positive"
+            Add these fields to each result:
+            - "is_false_positive": true/false
+            - "validation_reason": "Detailed explanation"
 
-            Consider in your analysis:
-            - Is user input involved? Is it properly validated/sanitized?
-            - Can this vulnerability actually be exploited in practice?
-            - Are there framework-specific protections in place (e.g., Django ORM, parameterized queries)?
-            - Is the flagged code path actually reachable and executable?
-            - What is the full data flow context?
+            Consider:
+            - Is user input properly validated/sanitized?
+            - Can the vulnerability be exploited?
+            - Are framework protections in place?
+            - Is the code path reachable?
 
-            After validating ALL findings, save the enhanced JSON with validation fields to: semgrep-report-validated.json
+            After validating ALL findings, use the Bash tool to save the validated JSON:
 
-            Be thorough and examine the actual code before making your determination. Do not guess.
+            cat > semgrep-report-validated.json << 'EOF'
+            {complete validated JSON with all original fields plus validation fields}
+            EOF
 
-      - name: Upload all reports
+      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
