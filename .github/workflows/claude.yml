@@ -4,24 +4,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-claude:
+  claude-cli:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repo — this allows Claude CLI to read the code
-      - name: Checkout repository
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
-      # 2. Install Claude CLI
+      # Install Claude CLI via pip (stable & works on GitHub runners)
       - name: Install Claude CLI
         run: |
-          curl -sSL https://install.anthropic.com | sh
+          pip install --upgrade pip
+          pip install anthropic-cli
           echo "export PATH=$HOME/.local/bin:$PATH" >> $GITHUB_ENV
 
-      # 3. Authenticate with Claude API key (store key in GitHub Secrets)
-      - name: Setup API Key
+      - name: Add API Key
         run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
 
-      # 4. Example: Ask Claude a question
-      - name: Ask Claude
-        run: claude "Summarize this repository." --files .
+      - name: Test Claude CLI
+        run: |
+          claude --version
+          claude "Summarize this repository." --files .
